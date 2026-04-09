@@ -8,6 +8,8 @@ import { styled } from 'nativewind';
 
 const SafeAreaView = styled(RNSafeAreaView);
 
+type SignUpStep = 'form' | 'verify';
+
 const SignUp = () => {
     const { signUp, errors, fetchStatus } = useSignUp();
     const { isSignedIn } = useAuth();
@@ -17,6 +19,10 @@ const SignUp = () => {
     const [emailAddress, setEmailAddress] = useState('');
     const [password, setPassword] = useState('');
     const [code, setCode] = useState('');
+
+    // Controls which screen is shown; starts at 'form', moves to 'verify'
+    // after the email code is sent. Can be reset to 'form' via "Edit email".
+    const [step, setStep] = useState<SignUpStep>('form');
 
     // Validation states
     const [emailTouched, setEmailTouched] = useState(false);
@@ -43,12 +49,17 @@ const SignUp = () => {
             return;
         }
 
-        // Send verification email
+        // Send verification email and advance to the verify step
         if (!error) {
             await signUp.verifications.sendEmailCode();
+            setStep('verify');
         }
     };
 
+    // FIX 1 — handleVerify: the navigate callback previously console.log'd
+    // session.currentTask and returned early, which left Clerk's session pending
+    // and the UI stuck on null. Now we redirect to an onboarding route when a
+    // currentTask is present, so Clerk's session flow can complete properly.
     const handleVerify = async () => {
         await signUp.verifications.verifyEmailCode({
             code,
@@ -57,8 +68,13 @@ const SignUp = () => {
         if (signUp.status === 'complete') {
             await signUp.finalize({
                 navigate: ({ session, decorateUrl }) => {
+                    // If Clerk reports a pending task (e.g. org invite, MFA setup),
+                    // redirect to the relevant onboarding route instead of returning
+                    // early — returning early left the session in a pending state.
                     if (session?.currentTask) {
-                        console.log(session?.currentTask);
+                        router.replace(
+                            `/onboarding/${session.currentTask.key}` as Href
+                        );
                         return;
                     }
 
@@ -87,17 +103,25 @@ const SignUp = () => {
         }
     };
 
+    // FIX 2 — "Edit email" recovery action.
+    // Resets local step back to the form so the user can correct a mistyped
+    // email and restart the attempt. Clears the code field and re-touches
+    // nothing — the existing form validation handles the rest.
+    const handleEditEmail = () => {
+        setCode('');
+        setStep('form');
+    };
+
     // Don't show anything if already signed in or sign-up is complete
     if (signUp.status === 'complete' || isSignedIn) {
         return null;
     }
 
-    // Show verification screen if email needs verification
-    if (
-        signUp.status === 'missing_requirements' &&
-        signUp.unverifiedFields.includes('email_address') &&
-        signUp.missingFields.length === 0
-    ) {
+    // Show verification screen based on local step state.
+    // We use `step === 'verify'` rather than checking signUp.status so that
+    // the "Edit email" action can bring the user back here without needing
+    // an SDK-level restart call.
+    if (step === 'verify') {
         return (
             <SafeAreaView className="auth-safe-area">
                 <KeyboardAvoidingView
@@ -163,6 +187,17 @@ const SignUp = () => {
                                         disabled={fetchStatus === 'fetching'}
                                     >
                                         <Text className="auth-secondary-button-text">Resend Code</Text>
+                                    </Pressable>
+
+                                    {/* FIX 2 — Recovery action: lets the user go back and
+                                        correct a mistyped email. Disabled while a request
+                                        is in-flight, consistent with other actions here. */}
+                                    <Pressable
+                                        className={`auth-secondary-button ${fetchStatus === 'fetching' && 'auth-button-disabled'}`}
+                                        onPress={handleEditEmail}
+                                        disabled={fetchStatus === 'fetching'}
+                                    >
+                                        <Text className="auth-secondary-button-text">Edit Email Address</Text>
                                     </Pressable>
                                 </View>
                             </View>

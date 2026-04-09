@@ -26,6 +26,39 @@ const SignIn = () => {
     const passwordValid = password.length > 0;
     const formValid = emailAddress.length > 0 && password.length > 0 && emailValid;
 
+    const finalizeNavigation = ({ session, decorateUrl }: { session: any; decorateUrl: (url: string) => string }) => {
+        
+        if (session?.currentTask) {
+            const taskUrl: string | undefined =
+                session.currentTask.signInUrl ?? session.currentTask.url;
+
+            if (taskUrl) {
+                if (taskUrl.startsWith('http')) {
+                    if (typeof window !== 'undefined' && window.location) {
+                        window.location.href = taskUrl;
+                    } else {
+                        router.replace(taskUrl as Href);
+                    }
+                } else {
+                    router.replace(taskUrl as Href);
+                }
+            }
+            
+            return;
+        }
+
+        const url = decorateUrl('/(tabs)');
+        if (url.startsWith('http')) {
+            if (typeof window !== 'undefined' && window.location) {
+                window.location.href = url;
+            } else {
+                router.replace('/(tabs)' as Href);
+            }
+        } else {
+            router.replace(url as Href);
+        }
+    };
+
     const handleSubmit = async () => {
         if (!formValid) return;
 
@@ -36,43 +69,13 @@ const SignIn = () => {
 
         if (error) {
             console.error(JSON.stringify(error, null, 2));
-            // posthog.capture('user_sign_in_failed', {
-            //     error_message: error.message,
-            // });
             return;
         }
 
         if (signIn.status === 'complete') {
-            await signIn.finalize({
-                navigate: ({ session, decorateUrl }) => {
-                    if (session?.currentTask) {
-                        console.log(session?.currentTask);
-                        return;
-                    }
-
-                    // posthog.identify(emailAddress, {
-                    //     $set: { email: emailAddress },
-                    //     $set_once: { first_sign_in_date: new Date().toISOString() },
-                    // });
-                    // posthog.capture('user_signed_in', { email: emailAddress });
-
-                    const url = decorateUrl('/(tabs)');
-                    if (url.startsWith('http')) {
-                        // Only use window.location on web platform
-                        if (typeof window !== 'undefined' && window.location) {
-                            window.location.href = url;
-                        } else {
-                            // On native, just use router navigation
-                            router.replace('/(tabs)' as Href);
-                        }
-                    } else {
-                        router.replace(url as Href);
-                    }
-                },
-            });
+            await signIn.finalize({ navigate: finalizeNavigation });
         } else if (signIn.status === 'needs_second_factor') {
-            // Handle MFA if needed (not implemented in this basic flow)
-            console.log('MFA required');
+            router.push('/(auth)/mfa-verify' as Href);
         } else if (signIn.status === 'needs_client_trust') {
             // Send email code for client trust verification
             const emailCodeFactor = signIn.supportedSecondFactors.find(
@@ -91,34 +94,8 @@ const SignIn = () => {
         await signIn.mfa.verifyEmailCode({ code });
 
         if (signIn.status === 'complete') {
-            await signIn.finalize({
-                navigate: ({ session, decorateUrl }) => {
-                    if (session?.currentTask) {
-                        console.log(session?.currentTask);
-                        return;
-                    }
-
-                    // Track successful sign-in after verification
-                    // posthog.identify(emailAddress, {
-                    //     $set: { email: emailAddress },
-                    //     $set_once: { first_sign_in_date: new Date().toISOString() },
-                    // });
-                    // posthog.capture('user_signed_in', { email: emailAddress });
-
-                    const url = decorateUrl('/(tabs)');
-                    if (url.startsWith('http')) {
-                        // Only use window.location on web platform
-                        if (typeof window !== 'undefined' && window.location) {
-                            window.location.href = url;
-                        } else {
-                            // On native, just use router navigation
-                            router.replace('/(tabs)' as Href);
-                        }
-                    } else {
-                        router.replace(url as Href);
-                    }
-                },
-            });
+            // Reuse the same helper — no duplicated navigation logic here.
+            await signIn.finalize({ navigate: finalizeNavigation });
         } else {
             console.error('Sign-in attempt not complete:', signIn);
         }
